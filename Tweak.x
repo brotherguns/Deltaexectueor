@@ -19,39 +19,35 @@ static void appendLog(NSString *entry) {
     [fh closeFile];
 }
 
-// Hook NSURLSession dataTaskWithRequest
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    NSURLRequest *capturedRequest = request;
     return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
         NSMutableString *log = [NSMutableString string];
         [log appendFormat:@"[%@] REQUEST\n", [NSDate date]];
-        [log appendFormat:@"URL: %@\n", request.URL.absoluteString];
-        [log appendFormat:@"Method: %@\n", request.HTTPMethod];
+        [log appendFormat:@"URL: %@\n", capturedRequest.URL.absoluteString];
+        [log appendFormat:@"Method: %@\n", capturedRequest.HTTPMethod];
 
-        // Request headers
         [log appendString:@"Request Headers:\n"];
-        [request.allHTTPHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
+        [capturedRequest.allHTTPHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
             [log appendFormat:@"  %@: %@\n", k, v];
         }];
 
-        // Request body
-        if (request.HTTPBody) {
-            NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
+        if (capturedRequest.HTTPBody) {
+            NSString *body = [[NSString alloc] initWithData:capturedRequest.HTTPBody encoding:NSUTF8StringEncoding];
             [log appendFormat:@"Request Body:\n%@\n", body ?: @"<binary>"];
         }
 
-        // Response
         if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
             NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
             [log appendFormat:@"Status: %ld\n", (long)http.statusCode];
             [log appendString:@"Response Headers:\n"];
-            [http.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
+            [http.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
                 [log appendFormat:@"  %@: %@\n", k, v];
             }];
         }
 
-        // Response body
         if (data) {
             NSString *responseBody = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             [log appendFormat:@"Response Body:\n%@\n", responseBody ?: @"<binary>"];
@@ -63,7 +59,9 @@ static void appendLog(NSString *entry) {
 
         appendLog(log);
 
-        if (completionHandler) completionHandler(data, response, error);
+        if (completionHandler) {
+            completionHandler(data, response, error);
+        }
     });
 }
 
