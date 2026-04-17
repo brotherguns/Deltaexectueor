@@ -57,7 +57,7 @@ jobs:
         id: theos-cache
         with:
           path: /theos
-          key: theos-linux-v2
+          key: theos-linux-v3
 
       - name: Clone Theos, Toolchain & SDKs
         if: steps.theos-cache.outputs.cache-hit != 'true'
@@ -65,8 +65,11 @@ jobs:
           echo "[*] Cloning Theos..."
           sudo git clone --recursive https://github.com/theos/theos /theos
           
-          echo "[*] Cloning iOS Toolchain for Linux..."
-          sudo git clone https://github.com/theos/toolchain_linux_iphone.git /theos/toolchain/linux/iphone
+          echo "[*] Ripping iOS Toolchain for Linux..."
+          sudo curl -L https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma -o toolchain.tar.lzma
+          sudo mkdir -p /theos/toolchain/linux/iphone
+          sudo tar -xf toolchain.tar.lzma -C /theos/toolchain/linux/iphone --strip-components=1
+          sudo rm toolchain.tar.lzma
           
           echo "[*] Cloning SDKs..."
           sudo git clone https://github.com/theos/sdks.git /theos/sdks
