@@ -36,7 +36,7 @@ jobs:
           echo "[+] Found: $TWEAK_FILE (name: $TWEAK_NAME)"
 
           if [ ! -f "Makefile" ]; then
-            printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
+            printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:14.5:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
             echo "[+] Generated Makefile"
           fi
 
@@ -76,6 +76,11 @@ jobs:
           sudo git clone https://github.com/theos/sdks.git /theos/sdks
           
           sudo chmod -R 777 /theos
+
+      - name: Patch Makefile SDK Target
+        run: |
+          echo "[*] Forcing Makefile to use iOS 14.5 SDK to prevent Clang macro errors..."
+          sed -i 's/iphone:clang:latest/iphone:clang:14.5/g' Makefile
 
       - name: Build Tweak
         run: make package FINALPACKAGE=1
