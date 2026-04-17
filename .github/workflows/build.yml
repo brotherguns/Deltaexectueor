@@ -45,19 +45,8 @@ jobs:
               [ -n "$PARSED" ] && BUNDLE_ID="$PARSED"
             fi
 
-            cat > Makefile <<EOF
-ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:14.0
-
-include \$(THEOS)/makefiles/common.mk
-
-TWEAK_NAME = $TWEAK_NAME
-${TWEAK_NAME}_FILES = $TWEAK_FILE
-${TWEAK_NAME}_CFLAGS = -fobjc-arc
-${TWEAK_NAME}_FRAMEWORKS = UIKit Foundation
-
-include \$(THEOS_MAKE_PATH)/tweak.mk
-EOF
+            printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' \
+              "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
             echo "Generated Makefile for $TWEAK_NAME"
           fi
 
