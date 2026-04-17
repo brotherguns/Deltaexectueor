@@ -18,107 +18,78 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Auto-detect tweak file and generate Makefile if missing
+      - name: Detect tweak file
         run: |
-          # Find the first .x or .xm file
-          TWEAK_FILE=$(find . -maxdepth 2 -name "*.x" -o -name "*.xm" | grep -v ".git" | head -n 1)
+          TWEAK_FILE=$(find . -maxdepth 2 \( -name "*.x" -o -name "*.xm" \) | grep -v ".git" | head -n 1)
           if [ -z "$TWEAK_FILE" ]; then
             echo "No .x or .xm file found!"
             exit 1
           fi
           TWEAK_FILE="${TWEAK_FILE#./}"
-          echo "Found tweak file: $TWEAK_FILE"
-          echo "TWEAK_FILE=$TWEAK_FILE" >> $GITHUB_ENV
-
-          # Parse TWEAK_NAME from the filename (strip extension)
           TWEAK_NAME=$(basename "$TWEAK_FILE" | sed 's/\.[^.]*$//')
+          echo "TWEAK_FILE=$TWEAK_FILE" >> $GITHUB_ENV
           echo "TWEAK_NAME=$TWEAK_NAME" >> $GITHUB_ENV
+          echo "Found: $TWEAK_FILE (name: $TWEAK_NAME)"
 
-          # Auto-generate Makefile if one doesn't exist
+      - name: Generate Makefile if missing
+        run: |
           if [ ! -f "Makefile" ]; then
-            echo "No Makefile found, generating one..."
-
-            # Try to find bundle ID from control file
-            BUNDLE_ID="com.example.$TWEAK_NAME"
-            if [ -f "control" ]; then
-              PARSED=$(grep -i "^Package:" control | awk '{print $2}')
-              [ -n "$PARSED" ] && BUNDLE_ID="$PARSED"
-            fi
-
-            printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' \
-              "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
-            echo "Generated Makefile for $TWEAK_NAME"
+            printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
+            echo "Generated Makefile"
           fi
 
-      - name: Auto-generate control file if missing
+      - name: Generate control file if missing
         run: |
           if [ ! -f "control" ]; then
-            TWEAK_NAME="${{ env.TWEAK_NAME }}"
-            cat > control <<EOF
-Package: com.example.$TWEAK_NAME
-Name: $TWEAK_NAME
-Version: 1.0.0
-Architecture: iphoneos-arm64
-Description: Auto-built tweak
-Maintainer: Unknown
-Author: Unknown
-Section: Tweaks
-EOF
-            echo "Generated control file"
+            printf 'Package: com.example.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Auto-built tweak\nMaintainer: Unknown\nAuthor: Unknown\nSection: Tweaks\n' "$TWEAK_NAME" "$TWEAK_NAME" > control
+            echo "Generated control"
           fi
 
-      - name: Setup Theos
+      - name: Cache Theos
         uses: actions/cache@v4
         id: theos-cache
         with:
           path: /theos
           key: theos-${{ runner.os }}-v1
 
-      - name: Install Theos (if not cached)
+      - name: Install Theos
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y curl git make perl zip
           sudo git clone --recursive https://github.com/theos/theos /theos
           sudo chmod -R 777 /theos
 
-      - name: Download iOS SDK
+      - name: Cache SDK
         uses: actions/cache@v4
         id: sdk-cache
         with:
           path: /theos/sdks
           key: theos-sdk-16.5
 
-      - name: Fetch SDK (if not cached)
+      - name: Download SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           sudo curl -LO https://github.com/theos/sdks/releases/download/master/iPhoneOS16.5.sdk.tar.xz
           sudo tar -xf iPhoneOS16.5.sdk.tar.xz -C /theos/sdks/
           sudo rm iPhoneOS16.5.sdk.tar.xz
-          echo "SDK installed"
 
-      - name: Build tweak
+      - name: Build
         env:
           THEOS: /theos
           THEOS_MAKE_PATH: /theos/makefiles
         run: |
-          make package FINALPACKAGE=1 2>&1
+          make package FINALPACKAGE=1
 
-      - name: Find built .deb
-        run: |
-          DEB=$(find . -name "*.deb" | head -n 1)
-          echo "DEB_PATH=$DEB" >> $GITHUB_ENV
-          echo "Built: $DEB"
-
-      - name: Upload .deb artifact
+      - name: Upload .deb
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.TWEAK_NAME }}-deb
-          path: ${{ env.DEB_PATH }}
+          path: packages/*.deb
           if-no-files-found: error
 
-      - name: Create GitHub Release on tag push
+      - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.DEB_PATH }}
+          files: packages/*.deb
           generate_release_notes: true
