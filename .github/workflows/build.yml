@@ -41,7 +41,6 @@ jobs:
       - name: Install System Dependencies & ldid
         run: |
           sudo apt-get update && sudo apt-get install -y curl git make perl zip fakeroot xz-utils libtinfo5 libncurses5
-          echo "[*] Ripping ldid from ProcursusTeam..."
           sudo curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -o /usr/local/bin/ldid
           sudo chmod +x /usr/local/bin/ldid
 
@@ -53,7 +52,7 @@ jobs:
         id: theos-cache
         with:
           path: /theos
-          key: theos-linux-v5
+          key: theos-linux-v6
 
       - name: Clone Theos, Toolchain & SDKs
         if: steps.theos-cache.outputs.cache-hit != 'true'
@@ -71,11 +70,8 @@ jobs:
           rm -rf /theos/sdks
           git clone https://github.com/theos/sdks.git /theos/sdks
 
-          chmod -R 777 /theos
-
       - name: Patch Makefile SDK Target
-        run: |
-          sed -i 's/iphone:clang:latest/iphone:clang:14.5/g' Makefile
+        run: sed -i 's/iphone:clang:latest/iphone:clang:14.5/g' Makefile
 
       - name: Build Tweak
         run: make package FINALPACKAGE=1
