@@ -9,7 +9,7 @@ on:
       - '.github/workflows/build.yml'
   workflow_dispatch:
 env:
-  THEOS: /theos
+  THEOS: ${{ github.workspace }}/theos
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -44,32 +44,28 @@ jobs:
           sudo curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -o /usr/local/bin/ldid
           sudo chmod +x /usr/local/bin/ldid
 
-      - name: Pre-create /theos with correct permissions
-        run: sudo mkdir -p /theos && sudo chmod 777 /theos
-
       - name: Cache Theos, Toolchain & SDKs
         uses: actions/cache@v4
         id: theos-cache
         with:
-          path: /theos
-          key: theos-linux-v6
+          path: ${{ github.workspace }}/theos
+          key: theos-linux-v7
 
       - name: Clone Theos, Toolchain & SDKs
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
           echo "[*] Cloning Theos..."
-          rm -rf /theos
-          git clone --recursive https://github.com/theos/theos /theos
+          git clone --recursive https://github.com/theos/theos $THEOS
 
           echo "[*] Fetching iOS Toolchain for Linux..."
           curl -L https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma -o toolchain.tar.lzma
-          mkdir -p /theos/toolchain/linux/iphone
-          tar -xf toolchain.tar.lzma -C /theos/toolchain/linux/iphone --strip-components=1
+          mkdir -p $THEOS/toolchain/linux/iphone
+          tar -xf toolchain.tar.lzma -C $THEOS/toolchain/linux/iphone --strip-components=1
           rm toolchain.tar.lzma
 
           echo "[*] Cloning SDKs..."
-          rm -rf /theos/sdks
-          git clone https://github.com/theos/sdks.git /theos/sdks
+          rm -rf $THEOS/sdks
+          git clone https://github.com/theos/sdks.git $THEOS/sdks
 
       - name: Patch Makefile SDK Target
         run: sed -i 's/iphone:clang:latest/iphone:clang:14.5/g' Makefile
