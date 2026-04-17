@@ -10,6 +10,9 @@ on:
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
+env:
+  THEOS: /theos
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,67 +21,58 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Detect tweak file
+      - name: Detect tweak file & Generate Configs
         run: |
           TWEAK_FILE=$(find . -maxdepth 2 \( -name "*.x" -o -name "*.xm" \) | grep -v ".git" | head -n 1)
           if [ -z "$TWEAK_FILE" ]; then
-            echo "No .x or .xm file found!"
+            echo "[-] No .x or .xm file found! Bailing out."
             exit 1
           fi
           TWEAK_FILE="${TWEAK_FILE#./}"
           TWEAK_NAME=$(basename "$TWEAK_FILE" | sed 's/\.[^.]*$//')
+          
           echo "TWEAK_FILE=$TWEAK_FILE" >> $GITHUB_ENV
           echo "TWEAK_NAME=$TWEAK_NAME" >> $GITHUB_ENV
-          echo "Found: $TWEAK_FILE (name: $TWEAK_NAME)"
+          echo "[+] Found: $TWEAK_FILE (name: $TWEAK_NAME)"
 
-      - name: Generate Makefile if missing
-        run: |
           if [ ! -f "Makefile" ]; then
             printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
-            echo "Generated Makefile"
+            echo "[+] Generated Makefile"
           fi
 
-      - name: Generate control file if missing
-        run: |
           if [ ! -f "control" ]; then
-            printf 'Package: com.example.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Auto-built tweak\nMaintainer: Unknown\nAuthor: Unknown\nSection: Tweaks\n' "$TWEAK_NAME" "$TWEAK_NAME" > control
-            echo "Generated control"
+            # Made the package ID lowercase to comply with dpkg standards
+            printf 'Package: com.jack.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Automated build\nMaintainer: Jack\nAuthor: Jack\nSection: Tweaks\n' "${TWEAK_NAME,,}" "$TWEAK_NAME" > control
+            echo "[+] Generated control"
           fi
 
-      - name: Cache Theos
+      - name: Install System Dependencies
+        # You need fakeroot and ldid to package the .deb without root permission errors
+        run: sudo apt-get update && sudo apt-get install -y curl git make perl zip fakeroot ldid xz-utils
+
+      - name: Cache Theos, Toolchain & SDKs
         uses: actions/cache@v4
         id: theos-cache
         with:
           path: /theos
-          key: theos-${{ runner.os }}-v1
+          key: theos-linux-v2
 
-      - name: Install Theos
+      - name: Clone Theos, Toolchain & SDKs
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get install -y curl git make perl zip
+          echo "[*] Cloning Theos..."
           sudo git clone --recursive https://github.com/theos/theos /theos
+          
+          echo "[*] Cloning iOS Toolchain for Linux..."
+          sudo git clone https://github.com/theos/toolchain_linux_iphone.git /theos/toolchain/linux/iphone
+          
+          echo "[*] Cloning SDKs..."
+          sudo git clone https://github.com/theos/sdks.git /theos/sdks
+          
           sudo chmod -R 777 /theos
 
-      - name: Cache SDK
-        uses: actions/cache@v4
-        id: sdk-cache
-        with:
-          path: /theos/sdks
-          key: theos-sdk-16.5
-
-      - name: Download SDK
-        if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: |
-          sudo curl -L "https://github.com/theos/sdks/archive/refs/heads/master.tar.gz" -o sdks.tar.gz
-          sudo tar -xf sdks.tar.gz --strip-components=1 -C /theos/sdks/
-          sudo rm sdks.tar.gz
-
-      - name: Build
-        env:
-          THEOS: /theos
-          THEOS_MAKE_PATH: /theos/makefiles
-        run: |
-          make package FINALPACKAGE=1
+      - name: Build Tweak
+        run: make package FINALPACKAGE=1
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
