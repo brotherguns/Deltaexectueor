@@ -1,87 +1,75 @@
 #import <Foundation/Foundation.h>
 
-// Helper function to rip the request data and append it to our dump file
-static void FoxDumpNetworkRequest(NSURLRequest *request) {
-    if (!request || !request.URL) return;
-
-    NSString *url = request.URL.absoluteString;
-    NSString *method = request.HTTPMethod ?: @"GET";
-    NSDictionary *headers = request.allHTTPHeaderFields;
-    
-    NSString *bodyString = @"[No Body or Unreadable]";
-    if (request.HTTPBody) {
-        // Attempt to parse body as UTF-8 string (JSON/Forms usually work here)
-        NSString *parsedBody = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
-        if (parsedBody) {
-            bodyString = parsedBody;
-        }
-    }
-
-    // Format the payload
-    NSString *logEntry = [NSString stringWithFormat:@"\n========================================\n"
-                                                     "TIME: %@\n"
-                                                     "METHOD: %@\n"
-                                                     "URL: %@\n"
-                                                     "HEADERS: %@\n"
-                                                     "BODY: %@\n"
-                                                     "========================================\n", 
-                          [NSDate date], method, url, headers, bodyString];
-
-    // Find the Documents directory (Visible in Files App / iTunes Sharing)
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths firstObject];
-    NSString *logFilePath = [documentsDirectory stringByAppendingPathComponent:@"Fox_Network_Dump.txt"];
-
-    // Append to file, create it if it doesn't exist
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if (![fileManager fileExistsAtPath:logFilePath]) {
-        [logEntry writeToFile:logFilePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:logFilePath];
-        [fileHandle seekToEndOfFile];
-        [fileHandle writeData:[logEntry dataUsingEncoding:NSUTF8StringEncoding]];
-        [fileHandle closeFile];
-    }
+static NSString *logPath() {
+    NSArray *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *dir = docs.firstObject ?: @"/tmp";
+    return [dir stringByAppendingPathComponent:@"network_dump.txt"];
 }
 
-// Hooking the main NSURLSession methods responsible for outbound traffic
+static void appendLog(NSString *entry) {
+    NSString *path = logPath();
+    NSString *line = [NSString stringWithFormat:@"%@\n---\n", entry];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) {
+        [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    }
+    [fh seekToEndOfFile];
+    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [fh closeFile];
+}
+
+// Hook NSURLSession dataTaskWithRequest
 %hook NSURLSession
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    FoxDumpNetworkRequest(request);
-    return %orig;
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSMutableString *log = [NSMutableString string];
+        [log appendFormat:@"[%@] REQUEST\n", [NSDate date]];
+        [log appendFormat:@"URL: %@\n", request.URL.absoluteString];
+        [log appendFormat:@"Method: %@\n", request.HTTPMethod];
+
+        // Request headers
+        [log appendString:@"Request Headers:\n"];
+        [request.allHTTPHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
+            [log appendFormat:@"  %@: %@\n", k, v];
+        }];
+
+        // Request body
+        if (request.HTTPBody) {
+            NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
+            [log appendFormat:@"Request Body:\n%@\n", body ?: @"<binary>"];
+        }
+
+        // Response
+        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+            [log appendFormat:@"Status: %ld\n", (long)http.statusCode];
+            [log appendString:@"Response Headers:\n"];
+            [http.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
+                [log appendFormat:@"  %@: %@\n", k, v];
+            }];
+        }
+
+        // Response body
+        if (data) {
+            NSString *responseBody = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            [log appendFormat:@"Response Body:\n%@\n", responseBody ?: @"<binary>"];
+        }
+
+        if (error) {
+            [log appendFormat:@"Error: %@\n", error.localizedDescription];
+        }
+
+        appendLog(log);
+
+        if (completionHandler) completionHandler(data, response, error);
+    });
 }
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(id)completionHandler {
-    FoxDumpNetworkRequest(request);
-    return %orig;
-}
-
-- (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url {
+- (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     NSURLRequest *req = [NSURLRequest requestWithURL:url];
-    FoxDumpNetworkRequest(req);
-    return %orig;
-}
-
-- (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url completionHandler:(id)completionHandler {
-    NSURLRequest *req = [NSURLRequest requestWithURL:url];
-    FoxDumpNetworkRequest(req);
-    return %orig;
-}
-
-%end // <-- This was the missing closing tag
-
-// Hooking older NSURLConnection methods just in case they use legacy shit
-%hook NSURLConnection
-
-+ (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
-    FoxDumpNetworkRequest(request);
-    return %orig;
-}
-
-+ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(id)handler {
-    FoxDumpNetworkRequest(request);
-    return %orig;
+    return [self dataTaskWithRequest:req completionHandler:completionHandler];
 }
 
 %end
