@@ -1,0 +1,8 @@
+Package: com.example.exampletweak
+Name: ExampleTweak
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Auto-built via GitHub Actions
+Maintainer: You
+Author: You
+Section: Tweaks
