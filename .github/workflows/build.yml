@@ -41,14 +41,16 @@ jobs:
           fi
 
           if [ ! -f "control" ]; then
-            # Made the package ID lowercase to comply with dpkg standards
             printf 'Package: com.jack.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Automated build\nMaintainer: Jack\nAuthor: Jack\nSection: Tweaks\n' "${TWEAK_NAME,,}" "$TWEAK_NAME" > control
             echo "[+] Generated control"
           fi
 
-      - name: Install System Dependencies
-        # You need fakeroot and ldid to package the .deb without root permission errors
-        run: sudo apt-get update && sudo apt-get install -y curl git make perl zip fakeroot ldid xz-utils
+      - name: Install System Dependencies & ldid
+        run: |
+          sudo apt-get update && sudo apt-get install -y curl git make perl zip fakeroot xz-utils
+          echo "[*] Ripping ldid from ProcursusTeam..."
+          sudo curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -o /usr/local/bin/ldid
+          sudo chmod +x /usr/local/bin/ldid
 
       - name: Cache Theos, Toolchain & SDKs
         uses: actions/cache@v4
