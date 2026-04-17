@@ -58,6 +58,7 @@ jobs:
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
           echo "[*] Cloning Theos..."
+          rm -rf /theos
           git clone --recursive https://github.com/theos/theos /theos
 
           echo "[*] Fetching iOS Toolchain for Linux..."
