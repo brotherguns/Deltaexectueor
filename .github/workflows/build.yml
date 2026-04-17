@@ -57,7 +57,7 @@ jobs:
         id: theos-cache
         with:
           path: /theos
-          key: theos-linux-v3
+          key: theos-linux-v4
 
       - name: Clone Theos, Toolchain & SDKs
         if: steps.theos-cache.outputs.cache-hit != 'true'
@@ -71,7 +71,8 @@ jobs:
           sudo tar -xf toolchain.tar.lzma -C /theos/toolchain/linux/iphone --strip-components=1
           sudo rm toolchain.tar.lzma
           
-          echo "[*] Cloning SDKs..."
+          echo "[*] Nuking default sdks directory and cloning real SDKs..."
+          sudo rm -rf /theos/sdks
           sudo git clone https://github.com/theos/sdks.git /theos/sdks
           
           sudo chmod -R 777 /theos
