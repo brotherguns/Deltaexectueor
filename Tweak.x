@@ -69,6 +69,8 @@ static void FoxDumpNetworkRequest(NSURLRequest *request) {
     return %orig;
 }
 
+%end // <-- This was the missing closing tag
+
 // Hooking older NSURLConnection methods just in case they use legacy shit
 %hook NSURLConnection
 
