@@ -10,9 +10,6 @@ on:
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
-env:
-  THEOS: /theos
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,60 +18,68 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Detect tweak file & Generate Configs
+      - name: Detect tweak file
         run: |
           TWEAK_FILE=$(find . -maxdepth 2 \( -name "*.x" -o -name "*.xm" \) | grep -v ".git" | head -n 1)
           if [ -z "$TWEAK_FILE" ]; then
-            echo "[-] No .x or .xm file found! Bailing out."
+            echo "No .x or .xm file found!"
             exit 1
           fi
           TWEAK_FILE="${TWEAK_FILE#./}"
           TWEAK_NAME=$(basename "$TWEAK_FILE" | sed 's/\.[^.]*$//')
-          
           echo "TWEAK_FILE=$TWEAK_FILE" >> $GITHUB_ENV
           echo "TWEAK_NAME=$TWEAK_NAME" >> $GITHUB_ENV
-          echo "[+] Found: $TWEAK_FILE (name: $TWEAK_NAME)"
+          echo "Found: $TWEAK_FILE (name: $TWEAK_NAME)"
 
+      - name: Generate Makefile if missing
+        run: |
           if [ ! -f "Makefile" ]; then
             printf 'ARCHS = arm64 arm64e\nTARGET = iphone:clang:latest:14.0\n\ninclude $(THEOS)/makefiles/common.mk\n\nTWEAK_NAME = %s\n%s_FILES = %s\n%s_CFLAGS = -fobjc-arc\n%s_FRAMEWORKS = UIKit Foundation\n\ninclude $(THEOS_MAKE_PATH)/tweak.mk\n' "$TWEAK_NAME" "$TWEAK_NAME" "$TWEAK_FILE" "$TWEAK_NAME" "$TWEAK_NAME" > Makefile
-            echo "[+] Generated Makefile"
+            echo "Generated Makefile"
           fi
 
-          if [ ! -f "control" ]; then
-            printf 'Package: com.jack.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Automated build\nMaintainer: Jack\nAuthor: Jack\nSection: Tweaks\n' "${TWEAK_NAME,,}" "$TWEAK_NAME" > control
-            echo "[+] Generated control"
-          fi
-
-      - name: Install System Dependencies & ldid
+      - name: Generate control file if missing
         run: |
-          sudo apt-get update && sudo apt-get install -y curl git make perl zip fakeroot xz-utils
-          echo "[*] Ripping ldid from ProcursusTeam..."
-          sudo curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -o /usr/local/bin/ldid
-          sudo chmod +x /usr/local/bin/ldid
+          if [ ! -f "control" ]; then
+            printf 'Package: com.example.%s\nName: %s\nVersion: 1.0.0\nArchitecture: iphoneos-arm64\nDescription: Auto-built tweak\nMaintainer: Unknown\nAuthor: Unknown\nSection: Tweaks\n' "$TWEAK_NAME" "$TWEAK_NAME" > control
+            echo "Generated control"
+          fi
 
-      - name: Cache Theos, Toolchain & SDKs
+      - name: Setup Theos
         uses: actions/cache@v4
         id: theos-cache
         with:
-          path: /theos
-          key: theos-linux-v2
+          path: |
+            ~/.cache/theos
+            /theos
+          key: theos-${{ runner.os }}-v3
 
-      - name: Clone Theos, Toolchain & SDKs
+      - name: Install Theos + Toolchain + SDK
         if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
-          echo "[*] Cloning Theos..."
+          sudo apt-get install -y curl git make perl zip fakeroot xz-utils
+
+          # Clone Theos
           sudo git clone --recursive https://github.com/theos/theos /theos
-          
-          echo "[*] Cloning iOS Toolchain for Linux..."
-          sudo git clone https://github.com/theos/toolchain_linux_iphone.git /theos/toolchain/linux/iphone
-          
-          echo "[*] Cloning SDKs..."
-          sudo git clone https://github.com/theos/sdks.git /theos/sdks
-          
           sudo chmod -R 777 /theos
 
-      - name: Build Tweak
-        run: make package FINALPACKAGE=1
+          # Download pre-built clang toolchain for Linux
+          curl -LO https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma
+          sudo mkdir -p /theos/toolchain/linux/iphone
+          sudo tar -xf linux-ios-arm64e-clang-toolchain.tar.lzma --strip-components=1 -C /theos/toolchain/linux/iphone
+          rm linux-ios-arm64e-clang-toolchain.tar.lzma
+
+          # Download SDK
+          curl -L "https://github.com/theos/sdks/archive/refs/heads/master.tar.gz" -o sdks.tar.gz
+          sudo tar -xf sdks.tar.gz --strip-components=1 -C /theos/sdks/
+          rm sdks.tar.gz
+
+      - name: Build
+        env:
+          THEOS: /theos
+          THEOS_MAKE_PATH: /theos/makefiles
+        run: |
+          make package FINALPACKAGE=1
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
