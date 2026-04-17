@@ -1,17 +1,16 @@
 #import <Foundation/Foundation.h>
 
-static NSString *logPath() {
+static NSString *dumpPath() {
     NSArray *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *dir = docs.firstObject ?: @"/tmp";
-    return [dir stringByAppendingPathComponent:@"network_dump.txt"];
+    return [[docs firstObject] stringByAppendingPathComponent:@"network_dump.txt"];
 }
 
-static void appendLog(NSString *entry) {
-    NSString *path = logPath();
-    NSString *line = [NSString stringWithFormat:@"%@\n---\n", entry];
+static void writeLog(NSString *msg) {
+    NSString *path = dumpPath();
+    NSString *line = [NSString stringWithFormat:@"%@\n---\n", msg];
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!fh) {
-        [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
         fh = [NSFileHandle fileHandleForWritingAtPath:path];
     }
     [fh seekToEndOfFile];
@@ -19,55 +18,86 @@ static void appendLog(NSString *entry) {
     [fh closeFile];
 }
 
-%hook NSURLSession
+@interface NetworkLogger : NSURLProtocol <NSURLSessionDataDelegate>
+@property (nonatomic, strong) NSURLSession *session;
+@property (nonatomic, strong) NSMutableData *responseData;
+@property (nonatomic, strong) NSHTTPURLResponse *httpResponse;
+@end
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
-    NSURLRequest *capturedRequest = request;
-    return %orig(request, ^(NSData *data, NSURLResponse *response, NSError *error) {
+@implementation NetworkLogger
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if ([NSURLProtocol propertyForKey:@"LoggedRequest" inRequest:request]) return NO;
+    NSString *scheme = request.URL.scheme.lowercaseString;
+    return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    NSMutableURLRequest *req = [self.request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:@"LoggedRequest" inRequest:req];
+
+    NSMutableString *log = [NSMutableString string];
+    [log appendFormat:@"[%@]\n", [NSDate date]];
+    [log appendFormat:@"URL: %@\n", req.URL.absoluteString];
+    [log appendFormat:@"Method: %@\n", req.HTTPMethod];
+    [log appendString:@"Headers:\n"];
+    [req.allHTTPHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
+        [log appendFormat:@"  %@: %@\n", k, v];
+    }];
+    if (req.HTTPBody) {
+        NSString *body = [[NSString alloc] initWithData:req.HTTPBody encoding:NSUTF8StringEncoding];
+        [log appendFormat:@"Body: %@\n", body ?: @"<binary>"];
+    }
+    writeLog(log);
+
+    self.responseData = [NSMutableData data];
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    self.session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
+    [[self.session dataTaskWithRequest:req] resume];
+}
+
+- (void)stopLoading {
+    [self.session invalidateAndCancel];
+}
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
+    self.httpResponse = (NSHTTPURLResponse *)response;
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    completionHandler(NSURLSessionResponseAllow);
+}
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    [self.responseData appendData:data];
+    [self.client URLProtocol:self didLoadData:data];
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    if (error) {
+        [self.client URLProtocol:self didFailWithError:error];
+        writeLog([NSString stringWithFormat:@"ERROR: %@\n%@", task.originalRequest.URL, error.localizedDescription]);
+    } else {
         NSMutableString *log = [NSMutableString string];
-        [log appendFormat:@"[%@] REQUEST\n", [NSDate date]];
-        [log appendFormat:@"URL: %@\n", capturedRequest.URL.absoluteString];
-        [log appendFormat:@"Method: %@\n", capturedRequest.HTTPMethod];
-
-        [log appendString:@"Request Headers:\n"];
-        [capturedRequest.allHTTPHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
-            [log appendFormat:@"  %@: %@\n", k, v];
-        }];
-
-        if (capturedRequest.HTTPBody) {
-            NSString *body = [[NSString alloc] initWithData:capturedRequest.HTTPBody encoding:NSUTF8StringEncoding];
-            [log appendFormat:@"Request Body:\n%@\n", body ?: @"<binary>"];
-        }
-
-        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-            NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-            [log appendFormat:@"Status: %ld\n", (long)http.statusCode];
-            [log appendString:@"Response Headers:\n"];
-            [http.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
+        [log appendFormat:@"RESPONSE: %@\n", task.originalRequest.URL.absoluteString];
+        if (self.httpResponse) {
+            [log appendFormat:@"Status: %ld\n", (long)self.httpResponse.statusCode];
+            [log appendString:@"Headers:\n"];
+            [self.httpResponse.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
                 [log appendFormat:@"  %@: %@\n", k, v];
             }];
         }
-
-        if (data) {
-            NSString *responseBody = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            [log appendFormat:@"Response Body:\n%@\n", responseBody ?: @"<binary>"];
-        }
-
-        if (error) {
-            [log appendFormat:@"Error: %@\n", error.localizedDescription];
-        }
-
-        appendLog(log);
-
-        if (completionHandler) {
-            completionHandler(data, response, error);
-        }
-    });
+        NSString *body = [[NSString alloc] initWithData:self.responseData encoding:NSUTF8StringEncoding];
+        [log appendFormat:@"Body:\n%@\n", body ?: @"<binary>"];
+        writeLog(log);
+        [self.client URLProtocolDidFinishLoading:self];
+    }
 }
 
-- (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
-    NSURLRequest *req = [NSURLRequest requestWithURL:url];
-    return [self dataTaskWithRequest:req completionHandler:completionHandler];
-}
+@end
 
-%end
+%ctor {
+    [NSURLProtocol registerClass:[NetworkLogger class]];
+}
