@@ -69,9 +69,9 @@ jobs:
       - name: Download SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
-          sudo curl -LO https://github.com/theos/sdks/releases/download/master/iPhoneOS16.5.sdk.tar.xz
-          sudo tar -xf iPhoneOS16.5.sdk.tar.xz -C /theos/sdks/
-          sudo rm iPhoneOS16.5.sdk.tar.xz
+          sudo curl -L "https://github.com/theos/sdks/archive/refs/heads/master.tar.gz" -o sdks.tar.gz
+          sudo tar -xf sdks.tar.gz --strip-components=1 -C /theos/sdks/
+          sudo rm sdks.tar.gz
 
       - name: Build
         env:
